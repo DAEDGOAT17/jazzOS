@@ -71,9 +71,6 @@ main:
     CLI
     HLT
 
-
-
-
 fail_disk_read:
     MOV si ,read_faliure
     CALL print
