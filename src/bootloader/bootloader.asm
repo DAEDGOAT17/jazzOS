@@ -74,9 +74,9 @@ main:
 fail_disk_read:
     MOV si ,read_faliure
     CALL print
-    JMP way_key_reboot
+    JMP wait_key_reboot
 
-way_key_reboot:
+wait_key_reboot:
     MOV ah,0
     INT 0x16  ;this waits for a key press
     JMP 0FFFFh:0
