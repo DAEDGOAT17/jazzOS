@@ -98,7 +98,7 @@ DirectoryEntry *find_file(const char *name)
             // ittratte over all the dir entry to find the actual file
             return &rootdirectoryrentry[i];
         }
-        else {
+        else{
             return NULL;
         }
     }
