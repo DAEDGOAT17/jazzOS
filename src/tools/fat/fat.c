@@ -99,10 +99,10 @@ DirectoryEntry *find_file(const char *name)
             return &rootdirectoryrentry[i];
         }
         else{
-            return NULL;
+            continue;
         }
+        return NULL;
     }
-
 }
 
 int main(int argc, char *argv[])
