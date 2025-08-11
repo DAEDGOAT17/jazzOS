@@ -52,7 +52,7 @@ typedef struct
 } __attribute__((packed)) DirectoryEntry; // in order to make the padding provided by the compiler go away
 
 BootSector g_bootsector;
-DirectoryEntry *rootdirectoryrentry = NULL;
+DirectoryEntry *rootdirectoryentry = NULL;
 uint8_t *g_fat = NULL;
 
 bool readbootsector(FILE *disk)
@@ -78,31 +78,29 @@ bool readFat(FILE *disk)
 bool readrootdirectory(FILE *disk)
 {
     uint32_t lba = g_bootsector.ReservedSectors + g_bootsector.SectorsPerFat * g_bootsector.FatCount;
-    uint32_t size = sizeof(DirectoryEntry) / g_bootsector.DirEntryCount;
-    uint32_t sectors = (size / g_bootsector.BytesPerSector);
+    uint32_t size = g_bootsector.DirEntryCount * sizeof(DirectoryEntry);
+    uint32_t sectors = size / g_bootsector.BytesPerSector;
     if (size % g_bootsector.BytesPerSector > 0)
     {
         sectors++;
     }
 
-    rootdirectoryrentry = ((DirectoryEntry *)malloc(sectors * g_bootsector.BytesPerSector));
-    return readsectors(disk, lba, sectors, rootdirectoryrentry);
+    rootdirectoryentry = ((DirectoryEntry *)malloc(sectors * g_bootsector.BytesPerSector));
+    return readsectors(disk, lba, sectors, rootdirectoryentry);
 }
 
 DirectoryEntry *find_file(const char *name)
 {
     for (uint32_t i = 0; i < g_bootsector.DirEntryCount; i++)
     {
-        if (memcmp(name, rootdirectoryrentry[i].Name, 11) == 0)
+        if (memcmp(name, rootdirectoryentry[i].Name, 11) == 0)
         {
             // ittratte over all the dir entry to find the actual file
-            return &rootdirectoryrentry[i];
+            printf("Found file: %.*s\n", 11, rootdirectoryentry[i].Name);
+            return &rootdirectoryentry[i];
         }
-        else{
-            continue;
-        }
-        return NULL;
     }
+    return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -144,7 +142,12 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr, "failed to find the file in the root directory %s\n", argv[2]);
         free(g_fat);
-        free(rootdirectoryrentry);
+        free(rootdirectoryentry);
         return -5;
     }
+
+    free(g_fat);
+    free(rootdirectoryentry);
+    fclose(disk);
+    return 0;
 }
