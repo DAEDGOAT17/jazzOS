@@ -1,6 +1,4 @@
-Here is a sample README.md file for your repository:
-
----
+## currently under the work
 
 # jazzOS
 
@@ -29,17 +27,20 @@ A personal operating system project written in C.
 ## Getting Started
 
 1. **Clone the repository:**
+
    ```
    git clone https://github.com/DAEDGOAT17/jazzOS.git
    cd jazzOS
    ```
 
 2. **Build the project:**
+
    ```
    make
    ```
 
 3. **Run the OS:**
+
    ```
    ./run.sh
    ```
