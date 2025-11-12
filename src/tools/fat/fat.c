@@ -55,7 +55,7 @@ typedef struct
 BootSector g_bootsector;
 DirectoryEntry *rootdirectoryentry = NULL;
 uint8_t *g_fat = NULL;
-
+uint32_t g_readrootdirectoryend;
 /**
  * Reads the boot sector (BPB) from the start of the disk image into the global g_bootsector structure.
  * @param disk Pointer to the opened disk image file.
@@ -108,6 +108,7 @@ bool readrootdirectory(FILE *disk)
         sectors++;
     }
 
+    g_readrootdirectoryend = lba + sectors;
     rootdirectoryentry = ((DirectoryEntry *)malloc(sectors * g_bootsector.BytesPerSector));
     return readsectors(disk, lba, sectors, rootdirectoryentry);
 }
@@ -129,6 +130,19 @@ DirectoryEntry *find_file(const char *name)
     }
     return NULL;
 }
+
+bool read_file(DirectoryEntry *fileentry, FILE *disk , uint8_t outputbuffer) 
+{
+    bool ok = true;
+    uint8_t first_cluster = fileentry->FirstClusterLow;
+
+    do{
+        uint32_t lba = g_readrootdirectoryend + (first_cluster - 2) * g_bootsector.SectorsPerCluster;
+
+    } while (ok);
+    
+    return ok;
+};
 
 /**
  * Entry point. Expects a disk image filename and a FAT 8.3 filename as arguments.
