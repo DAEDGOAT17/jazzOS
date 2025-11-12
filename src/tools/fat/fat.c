@@ -53,7 +53,7 @@ typedef struct
 } __attribute__((packed)) DirectoryEntry;
 
 BootSector g_bootsector;
-DirectoryEntry *rootdirectoryentry = NULL;
+DirectoryEntry *rootdirectoryrentry = NULL;
 uint8_t *g_fat = NULL;
 uint32_t g_readrootdirectoryend;
 /**
@@ -101,16 +101,15 @@ bool readFat(FILE *disk)
 bool readrootdirectory(FILE *disk)
 {
     uint32_t lba = g_bootsector.ReservedSectors + g_bootsector.SectorsPerFat * g_bootsector.FatCount;
-    uint32_t size = g_bootsector.DirEntryCount * sizeof(DirectoryEntry);
-    uint32_t sectors = size / g_bootsector.BytesPerSector;
+    uint32_t size = sizeof(DirectoryEntry) / g_bootsector.DirEntryCount;
+    uint32_t sectors = (size / g_bootsector.BytesPerSector);
     if (size % g_bootsector.BytesPerSector > 0)
     {
         sectors++;
     }
 
-    g_readrootdirectoryend = lba + sectors;
-    rootdirectoryentry = ((DirectoryEntry *)malloc(sectors * g_bootsector.BytesPerSector));
-    return readsectors(disk, lba, sectors, rootdirectoryentry);
+    rootdirectoryrentry = ((DirectoryEntry *)malloc(sectors * g_bootsector.BytesPerSector));
+    return readsectors(disk, lba, sectors, rootdirectoryrentry);
 }
 
 /**
@@ -122,33 +121,18 @@ DirectoryEntry *find_file(const char *name)
 {
     for (uint32_t i = 0; i < g_bootsector.DirEntryCount; i++)
     {
-        if (memcmp(name, rootdirectoryentry[i].Name, 11) == 0)
+        if (memcmp(name, rootdirectoryrentry[i].Name, 11) == 0)
         {
-            printf("Found file: %.*s\n", 11, rootdirectoryentry[i].Name);
-            return &rootdirectoryentry[i];
+            // ittratte over all the dir entry to find the actual file
+            return &rootdirectoryrentry[i];
         }
+        else{
+            continue;
+        }
+        return NULL;
     }
-    return NULL;
 }
 
-bool read_file(DirectoryEntry *fileentry, FILE *disk , uint8_t outputbuffer) 
-{
-    bool ok = true;
-    uint8_t first_cluster = fileentry->FirstClusterLow;
-
-    do{
-        uint32_t lba = g_readrootdirectoryend + (first_cluster - 2) * g_bootsector.SectorsPerCluster;
-
-    } while (ok);
-    
-    return ok;
-};
-
-/**
- * Entry point. Expects a disk image filename and a FAT 8.3 filename as arguments.
- * Loads the boot sector, FAT, and root directory, then searches for the specified file.
- * Prints errors and returns nonzero on failure.
- */
 int main(int argc, char *argv[])
 {
     if (argc < 3)
@@ -188,12 +172,7 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr, "failed to find the file in the root directory %s\n", argv[2]);
         free(g_fat);
-        free(rootdirectoryentry);
+        free(rootdirectoryrentry);
         return -5;
     }
-
-    free(g_fat);
-    free(rootdirectoryentry);
-    fclose(disk);
-    return 0;
 }
