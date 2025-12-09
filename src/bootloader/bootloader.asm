@@ -1,168 +1,199 @@
-; the bootloader loads all the bootable devices into the memory location of 0x7c00 and check for a signature with 0xaa55 if it fins the signature it starts executing form the start of the data segement so to get the bbotlaoder to work we need to write the signature to our baser loader memory address
-ORG 0x7c00
-BITS 16
+; Tell NASM to assemble for 16-bit real mode and start at address 0x7c00
+[org 0x7c00]
 
-JMP SHORT main ;jmps short only jmps inside the file
-NOP
+; ------------------------------------------------------------------------------
+; FAT12 BOOT SECTOR (BIOS Parameter Block / Extended Boot Record)
+; ------------------------------------------------------------------------------
+  jmp short start
+  nop
+  db "MSWIN4.1"   ; 8-byte OEM Identifier
+  dw 512         ; Bytes Per Sector (0x0200)
+  db 1           ; Sectors Per Cluster
+  dw 1           ; Reserved Sectors
+  db 2           ; FAT Count
+  dw 224         ; Directory Entry Count (0xE0)
+  dw 2880        ; Total Number of Sectors (1.44MB floppy)
+  db 0xF0        ; Media Descriptor Type (0xF0 for 3.5" floppy)
+  dw 9           ; Sectors Per FAT
+  dw 18          ; Sectors Per Track
+  dw 2           ; Head Count
+  dd 0           ; Hidden Sector Count
+  dd 0           ; Large Sector Count
+  db 0           ; Drive Number (0 for floppy)
+  db 0           ; Reserved
+  db 0x29        ; Extended Boot Signature (0x29 or 0x28)
+  dd 0xDEADBEEF  ; Volume ID (Serial Number)
+  db "MYOS        " ; 11-byte Volume Label (Padded with spaces)
+  db "FAT12   "   ; 8-byte System ID (Padded with spaces)
 
-bdb_oem: DB "MSWIN4.1"       ;SIZE 8
-bdb_bytes_per_sectors: DW 512
-bdb_sectors_per_cluster: DB 1
-bdb_reserved_sectors:  DW 1
-bdb_fat_count:     DB 2
-bdb_dir_entries_count: DW  0x0E0
-bdb_total_sectors:     DW  2880
-bdb_media_descriptor_type: DB 0xF0
-bdb_sectors_per_fat:   DW  9
-bdb_sectors_per_track: DW 18 
-bdb_heads:    DW 2
-bdb_hidden_sectors: DD 0
-bdb_large_sector_count: DD 0
-;extended boot record 
-ebr_drive_number:  DB 0
-                    DB 0
-ebr_signature:      DB 0x29
-ebr_volume_id:      DB 0x12,0x34,0x56,0x78
-ebr_volume_label:   DB  "PANKAJ0S0_1"     ;SIZE 11
-ebr_system_id:      DB  "FAT12   "      ;SIZE 8
+; ------------------------------------------------------------------------------
+; CODE START
+; ------------------------------------------------------------------------------
+start:
+  ; Setup Stack
+  mov bp, 0x7c00 ; Base pointer
+  mov sp, bp     ; Stack pointer (stack grows down from 0x7c00)
+  
+  ; Save Drive Number (set by BIOS in DL)
+  mov [boot_drive], dl 
+  
+  ; Jump to main logic
+  jmp main
 
-
-
-print:
-    PUSH si 
-    PUSH ax 
-    PUSH bx
-
-print_loop:
-    LODSB 
-    OR al ,al
-    JZ done_print
-
-    MOV ah ,0x0e    ;this makes the print to come to screen
-    MOV bh ,0
-    INT 0x10
-
-    JMP print_loop
-
-done_print:
-    POP bx
-    POP ax
-    POP si
-    RET
-
+; ------------------------------------------------------------------------------
+; MAIN LOGIC
+; ------------------------------------------------------------------------------
 main:
-    MOV ax,0
-    MOV ds , ax 
-    MOV es , ax
-    MOV ss , ax
+  ; Print "Hello world" (Used to verify the system is running)
+  mov si, msg_hello
+  call print_string
+  
+  ; Print "Reading from disk..."
+  mov si, msg_read
+  call print_string
+  
+  ; --- Disk Read Setup (To read Sector 2 into memory at 0x7E00:0000) ---
+  mov ax, 0x7e00     ; Segment for data destination
+  mov es, ax
+  mov bx, 0x0000     ; Offset for data destination (ES:BX)
+  
+  mov cl, 1          ; Read 1 sector
+  mov ax, 1          ; LBA = 1 (Sector 2, as LBA 0 is the boot sector)
+  mov dl, [boot_drive] ; Drive number
+  
+  mov di, 3          ; Retry count = 3
+  call disk_read     ; Call the disk read function
 
-    MOV sp , 0x7c00
+  ; Code for loading the rest of the kernel would go here...
+  
+  ; Final halt loop
+  cli ; Disable interrupts
+  hlt ; Halt the CPU
 
-    MOV [ebr_drive_number] ,dl
-    MOV ax ,1 
-    MOV cl ,1
-    MOV bx , 0x7E00
-    CALL disk_read
+; ------------------------------------------------------------------------------
+; LBA TO CHS CONVERSION FUNCTION
+; ------------------------------------------------------------------------------
+; Converts Logical Block Address (LBA) in AX to Cylinder-Head-Sector (CHS) in CX and DH.
+; (LBA = (Cyl * HPC + Head) * SPT + (Sec - 1))
+lba2chs:
+  push dx          ; Save DX for later
+  push ax          ; Save AX for later
+  
+  ; 1. Calculate Sector (Sec = (LBA % SPT) + 1)
+  xor dx, dx       ; Clear DX (DX:AX is dividend for DIV)
+  div word [SPT]   ; AX = LBA / SPT, DX = LBA % SPT
+  
+  inc dl           ; Sector numbers are 1-based, so add 1 to remainder (in DL)
+  mov cl, dl       ; Move Sector (5 bits) to CL (bits 0-7 of CX)
+  
+  ; 2. Calculate Head (Head = (LBA / SPT) % HPC)
+  xor dx, dx       ; Clear DX for next division
+  div word [HPC]   ; AX = (LBA/SPT) / HPC (Cylinder), DX = (LBA/SPT) % HPC (Head)
+  
+  mov dh, dl       ; Move Head (in DL) to DH (Head Register)
+  
+  ; 3. Calculate Cylinder (Cyl = (LBA / SPT) / HPC)
+  mov ch, al       ; Move Cylinder (8 bits in AL) to CH (High 8 bits of CX)
+  
+  shl ah, 6        ; Shift high 2 bits of Cylinder (in AH) left by 6
+  or cl, ah        ; OR with CL to combine sector and high cylinder bits
+  
+  pop ax           ; Restore AX
+  pop dx           ; Restore DX
+  ret
 
-
-    MOV si , os_boot_msg
-    CALL print
-
-    CLI
-    HLT
-
-fail_disk_read:
-    MOV si ,read_faliure
-    CALL print
-    JMP wait_key_reboot
-
-wait_key_reboot:
-    MOV ah,0
-    INT 0x16  ;this waits for a key press
-    JMP 0FFFFh:0
-    HLT
-
-
-halt:
-    CLI 
-    HLT
-
-
-lba_to_chs:
-    PUSH ax 
-    PUSH dx
-
-    XOR dx,dx
-    DIV word [bdb_sectors_per_track] ; (LBA % sectros per track )+1  first formulae gives us sector as lba is ax and exa/bdb_sec_per_track gives is the sectors as the modulous is given in dx by std div
-    INC dx  ; sector
-    MOV cx,dx
-
-    XOR dx,dx  ;setting the dx to zero
-    DIV word [bdb_heads]
-    
-    MOV dh,dl   ; head 
-    MOV ch ,al 
-    SHL ah , 6
-    OR cl ,ah    ; cylinder
-
-    POP ax 
-    MOV dl ,al
-    POP ax
-
-    RET
-
-
+; ------------------------------------------------------------------------------
+; DISK READ FUNCTION
+; ------------------------------------------------------------------------------
+; Reads sectors from the disk using INT 0x13, AH=0x02, with a retry loop.
 disk_read:
-    PUSH ax 
-    PUSH bx 
-    PUSH cx 
-    PUSH dx
-    PUSH di
+  push cx          ; Save CL (Sectors to Read) - overwritten by lba2chs
+  push dx          ; Save DL (Drive Number) - overwritten by lba2chs
+  
+  call lba2chs     ; Convert LBA (in AX) to CHS (in CX, DH)
+  
+  pop dx           ; Restore DL
+  pop cx           ; Restore CL
+  
+  ; Prepare AH and AL for INT 0x13, AH=0x02 (Read Sectors)
+  mov al, cl       ; AL = Number of sectors to read
+  mov ah, 0x02     ; AH = Function: Read Sectors
 
-    CALL lba_to_chs
-    POP ax
+.retry:
+  pusha            ; Save all registers before interrupt call
+  
+  stc              ; Set Carry Flag (to make checking easier)
+  int 0x13         ; Call BIOS disk service
+  jnc .done        ; If Carry Flag is NOT set (JNC), operation succeeded.
+  
+  popa             ; Restore registers for retry
+  call disk_reset  ; Reset disk controller
+  
+  dec di           ; Decrement retry counter (DI should be set by caller)
+  jnz .retry       ; If DI is not zero, retry
 
-    MOV ah,02h
-    MOV di ,3 ; counter
+.error:
+  jmp floppy_error ; Jump to the error routine
 
-retry:
-    PUSHA
-    STC  ;so we retry assuming faliure 
-    INT 13h ;calling the read sector disk interupt
-    JNC done_read  ;if no carry calling the disk read
-    POPA
+.done:
+  popa             ; Restore registers
+  ret
 
-    CALL disk_reset  ;if error then calling the disk reset
-    DEC di  ; decrese the carry counter 
-    TEST di ,di   ;check teh value of di == 0
-    JNZ retry   ; if not then retry left , try again
-
-fail:
-    JMP fail_disk_read
-
-done_read:
-    POP di
-    POP dx
-    POP cx
-    POP bx
-    POP ax
-    RET
-
+; ------------------------------------------------------------------------------
+; DISK RESET FUNCTION
+; ------------------------------------------------------------------------------
+; Resets the disk controller using INT 0x13, AH=0x00.
 disk_reset:
-    PUSHA
-    MOV ah,0
-    STC 
-    INT 13h
-    JC fail_disk_read
-    POPA
-    RET
+  push ax
+  mov ah, 0x00     ; AH = 0x00 (Reset Disk System)
+  int 0x13
+  jnc .done        ; If Carry Flag is clear, successful
+  jmp floppy_error ; On failure, jump to error
+  
+.done:
+  pop ax
+  ret
 
+; ------------------------------------------------------------------------------
+; ERROR & DATA SECTION
+; ------------------------------------------------------------------------------
+floppy_error:
+  ; Simple error display (using print_string function)
+  mov si, msg_error
+  call print_string
+  
+  ; Wait for key press (INT 0x16, AH=0x00)
+  mov ah, 0x00
+  int 0x16
+  
+  ; Reboot the system
+  jmp 0xFFFF:0x0000
 
-os_boot_msg:
-    DB 'os has successfully booted pankaj!' ,0x0D ,0x0A,0
+; Helper for printing strings (from Part 1)
+print_string:
+  mov ah, 0x0e     ; AH=0x0E (Teletype Output)
+.loop:
+  lodsb          ; Load byte from SI into AL, increment SI
+  cmp al, 0x00   ; Check for null terminator
+  je .done       ; If null, finish
+  int 0x10       ; Print character
+  jmp .loop
+.done:
+  ret
 
-read_faliure:
-    DB 'failed to read disk pankaj !' ,0x0D, 0X0A ,0
+; Variables and Constants
+boot_drive db 0
+SPT dw 18
+HPC dw 2
 
-TIMES 510-($-$$) DB 0
-DW 0xAA55
+; Messages
+msg_hello db "Hello world", 0x0D, 0x0A, 0x00
+msg_read db "Reading from disk...", 0x0D, 0x0A, 0x00
+msg_error db "Floppy Error! Press any key to reboot...", 0x0D, 0x0A, 0x00
+
+; ------------------------------------------------------------------------------
+; BOOT SECTOR PADDING AND MAGIC NUMBER
+; ------------------------------------------------------------------------------
+; Pad the boot sector to 510 bytes (Total size must be 512 bytes)
+times 510-($-$$) db 0
+dw 0xAA55 ; Boot Sector Magic Number

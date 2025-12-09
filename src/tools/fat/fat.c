@@ -1,178 +1,268 @@
 #include <stdio.h>
-#include <stdint.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
-typedef uint8_t bool;
-#define true 1
-#define false 0
-
-// Represents the BIOS Parameter Block (BPB) and extended boot sector fields for FAT12/16.
 typedef struct
 {
-    uint8_t BootJumpInstruction[3];
-    uint8_t OemIdentifier[8];
-    uint16_t BytesPerSector;
-    uint8_t SectorsPerCluster;
-    uint16_t ReservedSectors;
-    uint8_t FatCount;
-    uint16_t DirEntryCount;
-    uint16_t TotalSectors;
-    uint8_t MediaDescriptorType;
-    uint16_t SectorsPerFat;
-    uint16_t SectorsPerTrack;
-    uint16_t Heads;
-    uint32_t HiddenSectors;
-    uint32_t LargeSectorCount;
+    uint8_t BS_jmpBoot[3];
+    uint8_t BS_OEMName[8];
+    uint16_t BPB_BytesPerSec;
+    uint8_t BPB_SecPerClus;
+    uint16_t BPB_ResvdSecCnt;
+    uint8_t BPB_NumFATs;
+    uint16_t BPB_RootEntCnt;
+    uint16_t BPB_TotSec16;
+    uint8_t BPB_Media;
+    uint16_t BPB_FATSz16;
+} __attribute__((packed)) bootsector;
 
-    uint8_t DriveNumber;
-    uint8_t _Reserved;
-    uint8_t Signature;
-    uint32_t VolumeId;       // serial number, value doesn't matter
-    uint8_t VolumeLabel[11]; // 11 bytes, padded with spaces
-    uint8_t SystemId[8];
-
-} __attribute__((packed)) BootSector;
-
-// Represents a single FAT directory entry.
 typedef struct
 {
-    uint8_t Name[11];
-    uint8_t Attributes;
-    uint8_t _Reserved;
-    uint8_t CreatedTimeTenths;
-    uint16_t CreatedTime;
-    uint16_t CreatedDate;
-    uint16_t AccessedDate;
-    uint16_t FirstClusterHigh;
-    uint16_t ModifiedTime;
-    uint16_t ModifiedDate;
-    uint16_t FirstClusterLow;
-    uint32_t Size;
-} __attribute__((packed)) DirectoryEntry;
+    uint8_t DIR_Name[11];
+    uint8_t DIR_Attr;
+    uint8_t DIR_NTRes;
+    uint8_t DIR_CrtTimeTenth;
+    uint16_t DIR_CrtTime;
+    uint16_t DIR_CrtDate;
+    uint16_t DIR_LastAccDate;
+    uint16_t DIR_FstClusHI;
+    uint16_t DIR_WrtTime;
+    uint16_t DIR_WrtDate;
+    uint16_t DIR_FstClusLO;
+    uint32_t DIR_FileSize;
+} __attribute__((packed)) directory_entry;
 
-BootSector g_bootsector;
-DirectoryEntry *rootdirectoryrentry = NULL;
-uint8_t *g_fat = NULL;
-uint32_t g_readrootdirectoryend;
-/**
- * Reads the boot sector (BPB) from the start of the disk image into the global g_bootsector structure.
- * @param disk Pointer to the opened disk image file.
- * @return true on success, false on failure.
- */
-bool readbootsector(FILE *disk)
-{
-    return fread(&g_bootsector, sizeof(g_bootsector), 1, disk) > 0;
-}
+FILE *g_DiskFile = NULL;
+bootsector g_BootSector;
+uint8_t *g_Fat = NULL;
+directory_entry *g_RootDirectory = NULL;
+uint32_t g_RootDirectoryEnd = 0;
 
-/**
- * Reads 'count' sectors starting from logical block address (LBA) 'lba' into 'bufferout'.
- * @param disk Pointer to the opened disk image file.
- * @param lba Logical block address to start reading from.
- * @param count Number of sectors to read.
- * @param bufferout Output buffer to store the read data.
- * @return true on success, false on failure.
- */
-bool readsectors(FILE *disk, uint32_t lba, uint32_t count, void *bufferout)
-{
-    bool ok = true;
-    ok = ok && (fseek(disk, lba * g_bootsector.BytesPerSector, SEEK_SET) == 0);
-    ok = ok && (fread(bufferout, g_bootsector.BytesPerSector, count, disk) == count);
-    return ok;
-}
+bool read_boot_sector(void);
+bool read_sectors(uint32_t lba, uint32_t count, void *data);
+bool read_fat(void);
+bool read_root_directory(void);
+directory_entry *find_file(const char *filename);
+uint8_t *read_file(directory_entry *entry);
 
-/**
- * Allocates memory and reads the FAT table from the disk image into the global g_fat pointer.
- * @param disk Pointer to the opened disk image file.
- * @return true on success, false on failure.
- */
-bool readFat(FILE *disk)
+bool read_sectors(uint32_t lba, uint32_t count, void *data)
 {
-    g_fat = (uint8_t *)malloc(g_bootsector.SectorsPerFat * g_bootsector.BytesPerSector);
-    return readsectors(disk, g_bootsector.ReservedSectors, g_bootsector.SectorsPerFat, g_fat);
-}
+    uint32_t offset = lba * g_BootSector.BPB_BytesPerSec;
 
-/**
- * Allocates memory and reads the root directory entries from the disk image into the global rootdirectoryentry pointer.
- * @param disk Pointer to the opened disk image file.
- * @return true on success, false on failure.
- */
-bool readrootdirectory(FILE *disk)
-{
-    uint32_t lba = g_bootsector.ReservedSectors + g_bootsector.SectorsPerFat * g_bootsector.FatCount;
-    uint32_t size = sizeof(DirectoryEntry) / g_bootsector.DirEntryCount;
-    uint32_t sectors = (size / g_bootsector.BytesPerSector);
-    if (size % g_bootsector.BytesPerSector > 0)
+    if (fseek(g_DiskFile, offset, SEEK_SET) != 0)
     {
-        sectors++;
+        perror("Failed to seek in disk image");
+        return false;
     }
 
-    rootdirectoryrentry = ((DirectoryEntry *)malloc(sectors * g_bootsector.BytesPerSector));
-    return readsectors(disk, lba, sectors, rootdirectoryrentry);
+    uint32_t bytes_to_read = count * g_BootSector.BPB_BytesPerSec;
+    if (fread(data, 1, bytes_to_read, g_DiskFile) != bytes_to_read)
+    {
+        perror("Failed to read sectors from disk image");
+        return false;
+    }
+
+    return true;
 }
 
-/**
- * Searches the root directory for a file with the given 11-character FAT name.
- * @param name 11-character FAT file name (padded with spaces).
- * @return Pointer to the DirectoryEntry if found, or NULL if not found.
- */
-DirectoryEntry *find_file(const char *name)
+bool read_boot_sector(void)
 {
-    for (uint32_t i = 0; i < g_bootsector.DirEntryCount; i++)
+    if (fread(&g_BootSector, 1, sizeof(g_BootSector), g_DiskFile) != sizeof(g_BootSector))
     {
-        if (memcmp(name, rootdirectoryrentry[i].Name, 11) == 0)
+        perror("Failed to read boot sector");
+        return false;
+    }
+    return true;
+}
+
+bool read_fat(void)
+{
+    uint32_t fat_start_lba = g_BootSector.BPB_ResvdSecCnt;
+    uint32_t fat_sectors = g_BootSector.BPB_FATSz16;
+    uint32_t fat_size_bytes = fat_sectors * g_BootSector.BPB_BytesPerSec;
+    
+    g_Fat = (uint8_t *)malloc(fat_size_bytes);
+    if (!g_Fat)
+    {
+        perror("Failed to allocate memory for FAT");
+        return false;
+    }
+
+    if (!read_sectors(fat_start_lba, fat_sectors, g_Fat))
+    {
+        free(g_Fat);
+        g_Fat = NULL;
+        return false;
+    }
+
+    printf("FAT read successfully. Size: %u bytes\n", fat_size_bytes);
+    return true;
+}
+
+bool read_root_directory(void)
+{
+    uint32_t root_dir_start_lba = g_BootSector.BPB_ResvdSecCnt +
+                                  (g_BootSector.BPB_NumFATs * g_BootSector.BPB_FATSz16);
+
+    uint32_t root_dir_size_bytes = g_BootSector.BPB_RootEntCnt * sizeof(directory_entry);
+    uint32_t bytes_per_sec = g_BootSector.BPB_BytesPerSec;
+    uint32_t root_dir_sectors = (root_dir_size_bytes + bytes_per_sec - 1) / bytes_per_sec;
+    uint32_t buffer_size = root_dir_sectors * bytes_per_sec;
+    
+    g_RootDirectory = (directory_entry *)malloc(buffer_size);
+    if (!g_RootDirectory)
+    {
+        perror("Failed to allocate memory for root directory");
+        return false;
+    }
+
+    if (!read_sectors(root_dir_start_lba, root_dir_sectors, g_RootDirectory))
+    {
+        free(g_RootDirectory);
+        g_RootDirectory = NULL;
+        return false;
+    }
+
+    g_RootDirectoryEnd = root_dir_start_lba + root_dir_sectors;
+
+    printf("Root Directory read successfully. Sectors: %u\n", root_dir_sectors);
+    return true;
+}
+
+directory_entry *find_file(const char *filename)
+{
+    uint32_t num_entries = g_BootSector.BPB_RootEntCnt;
+
+    for (uint32_t i = 0; i < num_entries; i++)
+    {
+        directory_entry *entry = &g_RootDirectory[i];
+
+        if (memcmp(entry->DIR_Name, filename, 11) == 0)
         {
-            // ittratte over all the dir entry to find the actual file
-            return &rootdirectoryrentry[i];
+            printf("File '%s' found.\n", filename);
+            return entry;
         }
-        else{
-            continue;
-        }
+    }
+
+    return NULL;
+}
+
+uint8_t *read_file(directory_entry *entry)
+{
+    uint32_t bytes_per_cluster = g_BootSector.BPB_SecPerClus * g_BootSector.BPB_BytesPerSec;
+    uint32_t file_size = entry->DIR_FileSize;
+    uint32_t current_cluster = entry->DIR_FstClusLO;
+
+    uint8_t *buffer = (uint8_t *)malloc(file_size + bytes_per_cluster);
+    if (!buffer)
+    {
+        perror("Failed to allocate memory for file buffer");
         return NULL;
     }
+    uint8_t *buffer_pos = buffer;
+
+    printf("Reading file of size %u bytes. Starting cluster: %u\n", file_size, current_cluster);
+
+    while (current_cluster < 0xFF8)
+    {
+        uint32_t cluster_lba = g_RootDirectoryEnd + (current_cluster - 2) * g_BootSector.BPB_SecPerClus;
+
+        if (!read_sectors(cluster_lba, g_BootSector.BPB_SecPerClus, buffer_pos))
+        {
+            free(buffer);
+            return NULL;
+        }
+
+        buffer_pos += bytes_per_cluster;
+
+        uint32_t fat_offset = current_cluster * 3 / 2;
+        uint16_t next_cluster_raw = *(uint16_t *)&g_Fat[fat_offset];
+        uint16_t next_cluster;
+
+        if (current_cluster % 2 == 0)
+        {
+            next_cluster = next_cluster_raw & 0x0FFF;
+        }
+        else
+        {
+            next_cluster = next_cluster_raw >> 4;
+        }
+
+        current_cluster = next_cluster;
+    }
+
+    return buffer;
 }
 
 int main(int argc, char *argv[])
 {
-    if (argc < 3)
+    if (argc != 3)
     {
-        printf("syntax %s is <disk image>  <file name>", argv[0]);
-        return -1;
+        fprintf(stderr, "Syntax: %s <disk_image> <filename_8.3_caps_padded>\n", argv[0]);
+        return 1;
     }
 
-    FILE *disk = fopen(argv[1], "rb");
-
-    if (!disk)
+    g_DiskFile = fopen(argv[1], "rb");
+    if (!g_DiskFile)
     {
-        fprintf(stderr, "cannot read the disk %s \n", argv[1]);
-        return -1;
+        perror("Failed to open disk image");
+        return 1;
     }
 
-    if (!readbootsector(disk))
+    if (!read_boot_sector())
     {
-        fprintf(stderr, "failed to read a boot sector\n");
-        return -2;
+        fclose(g_DiskFile);
+        return 1;
     }
 
-    if (!readFat(disk))
+    if (!read_fat())
     {
-        fprintf(stderr, "failed to read a fat\n");
-        return -3;
+        fclose(g_DiskFile);
+        return 1;
     }
 
-    if (!readrootdirectory(disk))
+    if (!read_root_directory())
     {
-        fprintf(stderr, "failed to read a root directory\n");
-        return -4;
+        fclose(g_DiskFile);
+        return 1;
     }
 
-    DirectoryEntry *fileentry = find_file(argv[2]);
-    if (!fileentry)
+    directory_entry *file_entry = find_file(argv[2]);
+
+    if (!file_entry)
     {
-        fprintf(stderr, "failed to find the file in the root directory %s\n", argv[2]);
-        free(g_fat);
-        free(rootdirectoryrentry);
-        return -5;
+        fprintf(stderr, "Error: File '%s' not found.\n", argv[2]);
+        fclose(g_DiskFile);
+        return 1;
     }
+
+    uint8_t *file_content = read_file(file_entry);
+
+    if (file_content)
+    {
+        printf("\n--- File Content (%u bytes) ---\n", file_entry->DIR_FileSize);
+        for (uint32_t i = 0; i < file_entry->DIR_FileSize; i++)
+        {
+            if (isprint(file_content[i]))
+            {
+                putchar(file_content[i]);
+            }
+            else
+            {
+                printf("\\x%02X", file_content[i]);
+            }
+        }
+        printf("\n------------------------------\n");
+
+        free(file_content);
+    }
+
+    free(g_RootDirectory);
+    free(g_Fat);
+    fclose(g_DiskFile);
+
+    return 0;
 }
