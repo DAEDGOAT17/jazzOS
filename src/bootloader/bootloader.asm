@@ -23,7 +23,7 @@
   db 0           ; Reserved
   db 0x29        ; Extended Boot Signature (0x29 or 0x28)
   dd 0xDEADBEEF  ; Volume ID (Serial Number)
-  db "MYOS        " ; 11-byte Volume Label (Padded with spaces)
+  db "PANKAJ0S    " ; 11-byte Volume Label (Padded with spaces)
   db "FAT12   "   ; 8-byte System ID (Padded with spaces)
 
 ; ------------------------------------------------------------------------------
