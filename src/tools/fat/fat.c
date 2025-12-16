@@ -3,10 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
-typedef uint8_t bool;
-#define true 1
-#define false 0
+// typedef uint8_t bool;
+// #define true 1
+// #define false 0
+bool found = false;
 
 typedef struct
 {
