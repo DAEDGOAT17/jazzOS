@@ -1,1 +1,13 @@
+# build outputs
+build/
+*.bin
+*.img
+
+# editor files
+.vscode/
+.idea/
+*.swp
+
+# OS-specific
+.DS_Store
 
