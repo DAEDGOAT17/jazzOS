@@ -1,45 +1,68 @@
-org 0x0
 bits 16
-
-
-%define ENDL 0x0D, 0x0A
-
+org 0x20000
 
 start:
-    ; print hello world message
-    mov si, msg_hello
-    call puts
-
-.halt:
     cli
-    hlt
+    ; Print '1' to screen
+    mov ax, 0xb800
+    mov es, ax
+    mov word [es:0], 0x0f31
 
-;
-; Prints a string to the screen
-; Params:
-;   - ds:si points to string
-;
-puts:
-    ; save registers we will modify
-    push si
-    push ax
-    push bx
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov sp, 0x7C00
 
-.loop:
-    lodsb               ; loads next character in al
-    or al, al           ; verify if next character is null?
-    jz .done
+    ; Enable A20
+    in al, 0x92
+    or al, 2
+    out 0x92, al
 
-    mov ah, 0x0E        ; call bios interrupt
-    mov bh, 0           ; set page number to 0
-    int 0x10
+    ; Print '2'
+    mov word [es:2], 0x0f32
 
-    jmp .loop
+    ; --- THE FIX: FORCE PHYSICAL ADDRESS ---
+    ; We manually point the LGDT to 0x20000 + the offset of the descriptor
+    lgdt [gdt_descriptor]
+    
+    ; Switch to Protected Mode
+    mov eax, cr0
+    or eax, 1
+    mov cr0, eax
 
-.done:
-    pop bx
-    pop ax
-    pop si    
-    ret
+    ; --- THE FIX: FORCE ABSOLUTE FAR JUMP ---
+    ; We must jump to 0x08:0x20xxx. 
+    ; If NASM is giving us '37 00', we must add the 0x20000 base.
+    jmp 0x08:0x20000 + (init_pm - start)
 
-msg_hello: db 'Hello world from KERNEL of  pankaj!', ENDL, 0
+[bits 32]
+init_pm:
+    ; Print '3'
+    mov eax, 0x0f33
+    mov [0xb8004], ax
+
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov esp, 0x90000
+
+    ; Print '4'
+    mov eax, 0x0f34
+    mov [0xb8006], ax
+
+    jmp 0x21000
+
+align 8
+gdt_start:
+    dq 0x0000000000000000 
+    dq 0x00CF9A000000FFFF 
+    dq 0x00CF92000000FFFF 
+gdt_end:
+
+gdt_descriptor:
+    dw gdt_end - gdt_start - 1
+    dd 0x20000 + (gdt_start - start) ; FORCE physical 0x20xxx address
+
+times 4096-($-$$) db 0

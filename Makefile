@@ -1,57 +1,39 @@
 ASM = nasm
-SRC_DIR = src
-BUILD_DIR = build
-TOOLS_DIR = src/tools
 CC = gcc
+SRC_DIR = src
+BUILD_DIR = $(abspath build)
 
-.PHONY : all floppy_image kernel bootloader clean always tools_fat
+.PHONY: all clean run always bootloader kernel
 
-all: floppy_image tools_fat
+all: $(BUILD_DIR)/main_floppy.img
+# ... (rest of your variables) ...
 
-floppy_image: $(BUILD_DIR)/main_floppy.img
-
-
-$(BUILD_DIR)/main_floppy.img : bootloader kernel
+$(BUILD_DIR)/main_floppy.img: bootloader kernel
+	@echo "--- Building Floppy Image ---"
 	dd if=/dev/zero of=$(BUILD_DIR)/main_floppy.img bs=512 count=2880
-	mkfs.fat -F 12 -n "PANKAJOS" $(BUILD_DIR)/main_floppy.img 
+	mkfs.fat -F 12 -n "PANKAJOS" $(BUILD_DIR)/main_floppy.img
+	# Install Stage 1 to the Boot Sector
 	dd if=$(BUILD_DIR)/stage1.bin of=$(BUILD_DIR)/main_floppy.img conv=notrunc
-	mcopy -i $(BUILD_DIR)/main_floppy.img $(BUILD_DIR)/stage2.bin "::/stage2.bin"
-	mcopy -i $(BUILD_DIR)/main_floppy.img $(BUILD_DIR)/kernel.bin "::/kernel.bin"
-	mcopy -i $(BUILD_DIR)/main_floppy.img test.txt "::test.txt"
+	# Combine Stage 2 and Kernel into one file
+	cat $(BUILD_DIR)/stage2.bin $(BUILD_DIR)/kernel.bin > $(BUILD_DIR)/full_stage2.bin
+	# Copy to floppy with the filename Stage 1 expects (UPPERCASE)
+	mcopy -i $(BUILD_DIR)/main_floppy.img $(BUILD_DIR)/full_stage2.bin "::STAGE2.BIN"
 
-#
-#bootloader
-#
+bootloader: always
+	$(MAKE) -C $(SRC_DIR)/bootloader/stage1 BUILD_DIR=$(BUILD_DIR)
+	$(MAKE) -C $(SRC_DIR)/bootloader/stage2 BUILD_DIR=$(BUILD_DIR)
 
-bootloader: stage1 stage2
-
-stage1: $(BUILD_DIR)/stage1.bin
-$(BUILD_DIR)/stage1.bin : always
-	$(MAKE)	-C $(SRC_DIR)/bootloader/stage1 BUILD_DIR=$(abspath $(BUILD_DIR))
-
-stage2: $(BUILD_DIR)/stage2.bin
-$(BUILD_DIR)/stage2.bin : always
-	$(MAKE)	-C $(SRC_DIR)/bootloader/stage2 BUILD_DIR=$(abspath $(BUILD_DIR))
-
-#
-#kernel
-#
-
-kernel: $(BUILD_DIR)/kernel.bin
-$(BUILD_DIR)/kernel.bin : always
-	$(ASM) $(SRC_DIR)/kernel/kernel.asm -f bin -o $(BUILD_DIR)/kernel.bin
-
+kernel: always
+	$(MAKE) -C $(SRC_DIR)/kernel BUILD_DIR=$(BUILD_DIR)
 
 always:
 	mkdir -p $(BUILD_DIR)
 
-tools_fat: $(BUILD_DIR)/tools/fat
-$(BUILD_DIR)/tools/fat: always $(TOOLS_DIR)/fat/fat.c
-	mkdir -p $(BUILD_DIR)/tools
-	$(CC) -g -o $(BUILD_DIR)/tools/fat $(TOOLS_DIR)/fat/fat.c
-
 clean:
-	$(MAKE) -C $(SRC_DIR)/bootloader/stage1 BUILD_DIR=$(abspath $(BUILD_DIR)) clean
-	$(MAKE) -C $(SRC_DIR)/bootloader/stage2 BUILD_DIR=$(abspath $(BUILD_DIR)) clean
-	$(MAKE) -C $(SRC_DIR)/kernel BUILD_DIR=$(abspath $(BUILD_DIR)) clean
+	$(MAKE) -C $(SRC_DIR)/bootloader/stage1 BUILD_DIR=$(BUILD_DIR) clean
+	$(MAKE) -C $(SRC_DIR)/bootloader/stage2 BUILD_DIR=$(BUILD_DIR) clean
+	$(MAKE) -C $(SRC_DIR)/kernel BUILD_DIR=$(BUILD_DIR) clean
 	rm -rf $(BUILD_DIR)/*
+
+run: all
+	qemu-system-i386 -fda $(BUILD_DIR)/main_floppy.img -boot a

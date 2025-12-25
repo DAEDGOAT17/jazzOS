@@ -1,14 +1,13 @@
-BUILD_DIR?=build/
-ASM?=nasm
+BUILD_DIR ?= $(abspath ../../../build)
+ASM = nasm
 
-.PHONY: all clean
+TARGET = $(BUILD_DIR)/stage2.bin
 
-all: stage1
+all: $(TARGET)
 
-stage1: $(BUILD_DIR)/stage2.bin
-
-$(BUILD_DIR)/stage2.bin:
-	$(ASM) kernel.asm -f bin -o $(BUILD_DIR)/stage2.bin
+$(TARGET): kernel.asm
+	@mkdir -p $(BUILD_DIR)
+	$(ASM) $< -f bin -o $@
 
 clean:
-	rm -f $(BUILD_DIR)/stage2.bin
+	rm -f $(TARGET)

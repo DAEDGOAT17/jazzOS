@@ -1,14 +1,19 @@
-BUILD_DIR?=build/
-ASM?=nasm
+# src/kernel/Makefile
 
-.PHONY: all kernel clean
+all: $(BUILD_DIR)/kernel.bin
 
-all: kernel
+$(BUILD_DIR)/kernel.bin: $(BUILD_DIR)/kernel.elf
+	objcopy -O binary $< $@
 
-kernel: $(BUILD_DIR)/kernel.bin
+$(BUILD_DIR)/kernel.elf: $(BUILD_DIR)/entry.o $(BUILD_DIR)/main.o
+	# Explicitly set output format to elf32-i386
+	ld -m elf_i386 -T linker.ld -o $@ $^
 
-$(BUILD_DIR)/kernel.bin:
-	$(ASM) kernel.asm -f bin -o $(BUILD_DIR)/kernel.bin
+$(BUILD_DIR)/entry.o: entry.asm
+	nasm -f elf32 $< -o $@
+
+$(BUILD_DIR)/main.o: main.c
+	gcc -m32 -ffreestanding -fno-stack-protector -fno-pic -O0 -nostdlib -c $< -o $@
 
 clean:
-	rm -f $(BUILD_DIR)/kernel.bin
+	rm -f $(BUILD_DIR)/entry.o $(BUILD_DIR)/main.o $(BUILD_DIR)/kernel.elf $(BUILD_DIR)/kernel.bin

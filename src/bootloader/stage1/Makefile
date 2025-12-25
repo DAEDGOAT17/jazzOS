@@ -1,14 +1,15 @@
-BUILD_DIR?=build/
-ASM?=nasm
+# Fallback: If BUILD_DIR isn't provided by the root Makefile, 
+# it assumes the build folder is two levels up.
+BUILD_DIR ?= $(abspath ../../../build)
+ASM = nasm
 
-.PHONY: all clean
+TARGET = $(BUILD_DIR)/stage1.bin
 
-all: stage1
+all: $(TARGET)
 
-stage1: $(BUILD_DIR)/stage1.bin
-
-$(BUILD_DIR)/stage1.bin:
-	$(ASM) bootloader.asm -f bin -o $(BUILD_DIR)/stage1.bin
+$(TARGET): bootloader.asm
+	@mkdir -p $(BUILD_DIR)
+	$(ASM) $< -f bin -o $@
 
 clean:
-	rm -f $(BUILD_DIR)/stage1.bin
+	rm -f $(TARGET)
